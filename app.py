@@ -13,38 +13,44 @@ from queue import Queue
 import time
 import hashlib
 import logging
-from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from pymongo import MongoClient
+from pymongo import MongoClient, ASCENDING, DESCENDING
+from pymongo.errors import ConnectionFailure, OperationFailure
+from pymongo.server_api import ServerApi
 from bson.objectid import ObjectId
 import secrets
 import shutil
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
-log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, 'finance_manager.log')
+def setup_logging():
+    # Create a console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    console_handler.setLevel(logging.INFO)
 
-handler = RotatingFileHandler(log_file, maxBytes=10485760, backupCount=10)
-handler.setFormatter(logging.Formatter(
-    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-))
-handler.setLevel(logging.INFO)
+    # Set up app logger
+    app_logger = logging.getLogger('app')
+    app_logger.setLevel(logging.INFO)
+    app_logger.addHandler(console_handler)
 
-app_logger = logging.getLogger('app')
-app_logger.setLevel(logging.INFO)
-app_logger.addHandler(handler)
+    # Set up email logger
+    email_logger = logging.getLogger('email')
+    email_logger.setLevel(logging.INFO)
+    email_logger.addHandler(console_handler)
 
-# Email logger
-email_logger = logging.getLogger('email')
-email_logger.setLevel(logging.INFO)
-email_logger.addHandler(handler)
+    return app_logger, email_logger
+
+# Initialize loggers
+app_logger, email_logger = setup_logging()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -64,18 +70,43 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
-# MongoDB configuration
+# MongoDB configuration with connection pooling and retry logic
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/')
 DB_NAME = os.environ.get('DB_NAME', 'finance_manager')
 
+# MongoDB connection settings
+MONGO_SETTINGS = {
+    'maxPoolSize': 50,  # Maximum number of connections in the pool
+    'minPoolSize': 10,  # Minimum number of connections in the pool
+    'maxIdleTimeMS': 30000,  # Maximum time a connection can remain idle
+    'waitQueueTimeoutMS': 5000,  # How long to wait for a connection from the pool
+    'serverSelectionTimeoutMS': 5000,  # How long to wait for server selection
+    'connectTimeoutMS': 5000,  # How long to wait for initial connection
+    'socketTimeoutMS': 30000,  # How long to wait for operations
+    'retryWrites': True,  # Enable automatic retry of write operations
+    'retryReads': True,  # Enable automatic retry of read operations
+    'w': 'majority',  # Write concern for better durability
+    'readPreference': 'secondaryPreferred'  # Read from secondary nodes when possible
+}
+
+# Initialize MongoDB connection with retry logic
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def get_mongodb_client():
+    try:
+        client = MongoClient(MONGO_URI, **MONGO_SETTINGS)
+        # Test connection
+        client.server_info()
+        app_logger.info("Connected to MongoDB successfully")
+        return client
+    except ConnectionFailure as e:
+        app_logger.error(f"Failed to connect to MongoDB: {e}")
+        raise
+
 try:
-    client = MongoClient(MONGO_URI)
+    client = get_mongodb_client()
     db = client[DB_NAME]
-    # Test connection
-    client.server_info()
-    app_logger.info("Connected to MongoDB successfully")
 except Exception as e:
-    app_logger.error(f"Failed to connect to MongoDB: {e}")
+    app_logger.error(f"Failed to initialize MongoDB connection: {e}")
     raise
 
 # Database collections
@@ -84,6 +115,120 @@ transactions = db['transactions']
 budgets = db['budgets']
 settings = db['settings']
 email_logs = db['email_logs']
+
+# Create optimized indexes for better query performance
+def create_indexes():
+    try:
+        # Drop existing indexes first to avoid conflicts
+        users.drop_indexes()
+        transactions.drop_indexes()
+        budgets.drop_indexes()
+        email_logs.drop_indexes()
+        
+        # Users collection indexes
+        users.create_index([("email", ASCENDING)], unique=True)
+        users.create_index([("created_at", DESCENDING)])
+        users.create_index([("last_login", DESCENDING)])
+        
+        # Transactions collection indexes
+        transactions.create_index([
+            ("user_id", ASCENDING),
+            ("date", DESCENDING)
+        ])
+        transactions.create_index([
+            ("user_id", ASCENDING),
+            ("type", ASCENDING),
+            ("date", DESCENDING)
+        ])
+        transactions.create_index([
+            ("user_id", ASCENDING),
+            ("category", ASCENDING),
+            ("date", DESCENDING)
+        ])
+        transactions.create_index([
+            ("user_id", ASCENDING),
+            ("tags", ASCENDING)
+        ])
+        transactions.create_index([
+            ("user_id", ASCENDING),
+            ("payment_method", ASCENDING)
+        ])
+        
+        # Budgets collection indexes
+        budgets.create_index([
+            ("user_id", ASCENDING),
+            ("category", ASCENDING)
+        ], unique=True)
+        
+        # Email logs collection indexes
+        email_logs.create_index([("timestamp", DESCENDING)])
+        email_logs.create_index([("to", ASCENDING), ("timestamp", DESCENDING)])
+        email_logs.create_index([("status", ASCENDING)])
+        
+        app_logger.info("Database indexes created successfully")
+    except OperationFailure as e:
+        app_logger.error(f"Error creating indexes: {e}")
+        # Don't raise the error, just log it
+        # This allows the application to continue running even if index creation fails
+        return False
+    except Exception as e:
+        app_logger.error(f"Unexpected error creating indexes: {e}")
+        return False
+    
+    return True
+
+# Create indexes
+create_indexes()
+
+# Helper function for MongoDB operations with retry logic
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def execute_mongo_operation(operation, *args, **kwargs):
+    try:
+        return operation(*args, **kwargs)
+    except ConnectionFailure as e:
+        app_logger.error(f"MongoDB connection error: {e}")
+        raise
+    except OperationFailure as e:
+        app_logger.error(f"MongoDB operation error: {e}")
+        raise
+
+# Example of using the helper function for a query
+def get_user_by_email(email):
+    return execute_mongo_operation(
+        users.find_one,
+        {'email': email}
+    )
+
+# Example of using the helper function for an insert
+def insert_transaction(transaction_data):
+    return execute_mongo_operation(
+        transactions.insert_one,
+        transaction_data
+    )
+
+# Example of using the helper function for an update
+def update_user_settings(user_id, settings):
+    return execute_mongo_operation(
+        users.update_one,
+        {'_id': ObjectId(user_id)},
+        {'$set': {'settings': settings}}
+    )
+
+# Example of using the helper function for aggregation
+def get_monthly_stats(user_id, start_date, end_date):
+    return execute_mongo_operation(
+        transactions.aggregate,
+        [
+            {'$match': {
+                'user_id': user_id,
+                'date': {'$gte': start_date, '$lt': end_date}
+            }},
+            {'$group': {
+                '_id': '$type',
+                'total': {'$sum': '$amount'}
+            }}
+        ]
+    )
 
 # Resend email configuration
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
@@ -188,21 +333,6 @@ def send_email(to_email, subject, html_content, from_email=DEFAULT_FROM_EMAIL, q
     else:
         # Direct sending for cases where immediate confirmation is needed
         return _send_email_direct(to_email, subject, html_content, from_email)
-
-# Create indexes for better performance
-try:
-    users.create_index("email", unique=True)
-    transactions.create_index([("user_id", 1), ("date", -1)])
-    transactions.create_index([("user_id", 1), ("type", 1)])
-    transactions.create_index([("user_id", 1), ("category", 1)])
-    transactions.create_index([("user_id", 1), ("type", 1), ("date", -1)])
-    budgets.create_index([("user_id", 1), ("category", 1)])
-    email_logs.create_index([("timestamp", -1)])
-    email_logs.create_index([("to", 1), ("timestamp", -1)])
-    email_logs.create_index([("status", 1)])
-    app_logger.info("Database indexes created")
-except Exception as e:
-    app_logger.error(f"Error creating indexes: {e}")
 
 # Currency symbols mapping
 CURRENCY_SYMBOLS = {
@@ -1708,44 +1838,22 @@ def should_send_email(user_id, notification_type):
 @app.route('/admin/logs')
 @admin_required
 def view_logs():
-    log_type = request.args.get('type', 'app')
-    page = int(request.args.get('page', 1))
-    lines_per_page = int(request.args.get('lines', 100))
-    
-    # Get log file path based on type
-    if log_type == 'app':
-        log_file = 'logs/finance_manager.log'
-    else:  # waitress
-        log_file = 'logs/waitress.log'
-    
+    """Admin interface for viewing application logs"""
     try:
-        # Read all lines
-        with open(log_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        # Calculate pagination
-        total_lines = len(lines)
-        total_pages = (total_lines + lines_per_page - 1) // lines_per_page
-        start_idx = (page - 1) * lines_per_page
-        end_idx = min(start_idx + lines_per_page, total_lines)
-        
-        # Get lines for current page
-        current_lines = lines[start_idx:end_idx]
-        
+        # In a serverless environment, we can't read log files
+        # Instead, we'll show a message about logging configuration
         return render_template('admin/logs.html',
-                             title=f'{log_type.title()} Logs',
-                             logs=current_lines,
-                             current_page=page,
-                             total_pages=total_pages,
-                             log_type=log_type,
-                             max=max,  # Add max function to context
-                             min=min)  # Add min function to context
+                             title='Application Logs',
+                             logs=['Logs are not available in serverless environment.'],
+                             current_page=1,
+                             total_pages=1,
+                             log_type='app',
+                             max=max,
+                             min=min)
                              
-    except FileNotFoundError:
-        flash('Log file not found', 'error')
-        return redirect(url_for('dashboard'))
     except Exception as e:
-        flash(f'Error reading logs: {str(e)}', 'error')
+        app_logger.error(f"Error accessing logs: {e}")
+        flash('Error accessing logs', 'error')
         return redirect(url_for('dashboard'))
 
 # Add endpoint to clear logs with admin authentication
@@ -1753,7 +1861,7 @@ def view_logs():
 @login_required
 @admin_required
 def clear_logs():
-    """Clear log files with admin authentication"""
+    """Clear logs with admin authentication"""
     try:
         if not is_admin(session['user_id']):
             return jsonify({'success': False, 'message': 'Admin privileges required'})
@@ -1769,36 +1877,14 @@ def clear_logs():
             app_logger.warning(f"Failed attempt to clear logs with invalid admin password by user ID: {session['user_id']}")
             return jsonify({'success': False, 'message': 'Invalid admin password'})
         
-        # Determine which log file to clear
-        if log_type == 'email':
-            log_path = os.path.join(log_dir, 'email.log')
-            log_name = "Email System Logs"
-        elif log_type == 'waitress':
-            log_path = os.path.join(log_dir, 'waitress.log')
-            log_name = "Waitress Server Logs"
-        else:
-            log_path = os.path.join(log_dir, 'finance_manager.log')
-            log_name = "Application Logs"
-            
-        # Check if log file exists
-        if not os.path.exists(log_path):
-            return jsonify({'success': False, 'message': 'Log file not found'})
-            
-        # Backup log file before clearing
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        backup_dir = os.path.join(log_dir, 'backups')
-        os.makedirs(backup_dir, exist_ok=True)
+        # In a serverless environment, we can't clear log files
+        # Instead, we'll just log the attempt
+        app_logger.info(f"Log clear request received from admin (user ID: {session['user_id']})")
         
-        backup_path = os.path.join(backup_dir, f"{os.path.basename(log_path)}.{timestamp}")
-        shutil.copy2(log_path, backup_path)
-        
-        # Clear log file
-        with open(log_path, 'w') as f:
-            f.write(f"# Log file cleared by admin (user ID: {session['user_id']}) on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            
-        app_logger.info(f"Log file {log_name} cleared by admin (user ID: {session['user_id']})")
-        
-        return jsonify({'success': True, 'message': f'Log file cleared and backed up to {backup_path}'})
+        return jsonify({
+            'success': True, 
+            'message': 'Log clearing is not available in serverless environment. Logs are managed by the platform.'
+        })
     except Exception as e:
         app_logger.error(f"Error clearing logs: {e}")
         return jsonify({'success': False, 'message': f'Error clearing logs: {str(e)}'})

@@ -154,3 +154,4 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+.vercel
